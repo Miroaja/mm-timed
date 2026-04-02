@@ -257,6 +257,119 @@ void test_reset_behavior() {
   assert(!triggered);
 }
 
+void test_over_loop_long() {
+  std::cout << "\n[TEST] over loop (blocking)\n";
+
+  // Run for exactly 500ms
+  duration_t target_duration = 500ms;
+  over<high_resolution_clock, duration_t> o(target_duration);
+
+  int count = 0;
+  auto start = high_resolution_clock::now();
+
+  o.run(
+      [&](auto dt, auto t) {
+        ++count;
+        if (count % 100000 == 0) { // high_res/nanos will run MANY iterations
+          std::cout << "  iteration " << count
+                    << " | elapsed=" << duration_cast<milliseconds>(t)
+                    << " | dt=" << dt << "\n";
+        }
+      },
+      loop);
+
+  auto actual_elapsed = high_resolution_clock::now() - start;
+  auto elapsed_ms = duration_cast<milliseconds>(actual_elapsed);
+
+  std::cout << "  Total iterations: " << count << "\n";
+  std::cout << "  Total elapsed: " << elapsed_ms << "\n";
+
+  assert(actual_elapsed >= target_duration);
+  std::cout << "  Accuracy check passed.\n";
+}
+
+void test_over_non_loop() {
+  std::cout << "\n[TEST] over (non-blocking)\n";
+
+  duration_t target_duration = 500ms;
+  over<high_resolution_clock, duration_t> o(target_duration);
+
+  int count = 0;
+  auto start = high_resolution_clock::now();
+
+  do {
+    o.run([&](auto dt, auto t) {
+      ++count;
+      if (count % 100000 == 0) {
+        std::cout << "  iteration " << count
+                  << " | elapsed=" << duration_cast<milliseconds>(t)
+                  << " | dt=" << dt << "\n";
+      }
+    });
+  } while (o.is_running());
+
+  auto actual_elapsed = high_resolution_clock::now() - start;
+  auto elapsed_ms = duration_cast<milliseconds>(actual_elapsed);
+
+  std::cout << "  Total iterations: " << count << "\n";
+  std::cout << "  Total elapsed: " << elapsed_ms << "\n";
+
+  assert(actual_elapsed >= target_duration);
+  std::cout << "  Accuracy check passed.\n";
+}
+
+void test_over_thread_long() {
+  std::cout << "\n[TEST] over thread (non-blocking)\n";
+
+  duration_t target_duration = 500ms;
+  over<high_resolution_clock, duration_t> o(target_duration);
+  int count = 0;
+
+  auto start = high_resolution_clock::now();
+
+  std::thread worker([&]() {
+    // Non-blocking version requires a manual loop
+    while (true) {
+      o.run([&](auto, auto) { ++count; });
+      if (!o.is_running() && count > 0)
+        break;
+    }
+  });
+
+  worker.join();
+
+  auto actual_elapsed = high_resolution_clock::now() - start;
+  std::cout << "  Total iterations in thread: " << count << "\n";
+  std::cout << "  Total elapsed in thread: "
+            << duration_cast<milliseconds>(actual_elapsed) << "\n";
+
+  assert(actual_elapsed >= target_duration);
+}
+
+void test_over_thread_loop() {
+  std::cout << "\n[TEST] over thread (blocking)\n";
+
+  duration_t target_duration = 500ms;
+  over<high_resolution_clock, duration_t> o(target_duration);
+  int count = 0;
+
+  auto start = high_resolution_clock::now();
+
+  std::thread worker([&]() {
+    // Non-blocking version requires a manual loop
+    o.run([&](auto, auto) { ++count; }, loop);
+  });
+
+  worker.join();
+
+  auto actual_elapsed = high_resolution_clock::now() - start;
+  std::cout << "  Total iterations in thread: " << count << "\n";
+  std::cout << "  Total elapsed in thread: "
+            << duration_cast<milliseconds>(actual_elapsed) << "\n";
+
+  assert(actual_elapsed >= target_duration);
+}
+
 // -------------------------
 // main
 // -------------------------
@@ -269,6 +382,10 @@ int main() {
   test_drift_stress();
   test_slow_callback_stress();
   test_reset_behavior();
+  test_over_loop_long();
+  test_over_non_loop();
+  test_over_thread_long();
+  test_over_thread_loop();
 
   std::cout << "\nAll extended tests passed!\n";
 }

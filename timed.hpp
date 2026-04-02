@@ -1,5 +1,7 @@
 #pragma once
 #include <chrono>
+#include <concepts>
+#include <ctime>
 #include <thread>
 
 namespace mm {
@@ -17,7 +19,7 @@ struct every {
   using duration_t = Duration;
   using time_point_t = typename clock_t::time_point;
 
-  explicit every(duration_t step) noexcept
+  explicit every(const duration_t &step) noexcept
       : _step(step), _last(clock_t::now()) {}
 
   void reset() noexcept { _last = clock_t::now(); }
@@ -109,7 +111,7 @@ struct every {
     requires requires(F &&f, duration_t dt) {
       { f(dt, true) } -> std::same_as<void>;
     }
-  void run_over(F &&f, duration_t over) {
+  void run_over(F &&f, const duration_t &over) {
     auto start = clock_t::now();
     auto end = start + over;
     _last = start;
@@ -137,7 +139,56 @@ private:
 template <typename Clock = std::chrono::steady_clock,
           typename Duration = std::chrono::duration<float>>
   requires std::chrono::is_clock_v<Clock>
-struct over {};
-// FEATURE: implement "over time" timers
+struct over {
+  using clock_t = Clock;
+  using duration_t = Duration;
+  using time_point_t = typename clock_t::time_point;
+
+  inline over(const duration_t &dur) : _duration(dur), _running(false) {}
+
+  template <typename F>
+    requires requires(F &&f, duration_t dt, duration_t t) {
+      { f(dt, t) } -> std::same_as<void>;
+    }
+  inline void run(F &&f, loop_t) {
+    auto start = clock_t::now();
+    _running = true;
+    auto dt = duration_t((typename duration_t::rep)(1));
+    for (auto loop_start = clock_t::now(); loop_start < start + _duration;
+         loop_start = clock_t::now()) {
+      f(dt, std::chrono::duration_cast<duration_t>(loop_start - start));
+      dt = std::chrono::duration_cast<duration_t>(clock_t::now() - loop_start);
+    }
+    _running = false;
+  }
+
+  template <typename F>
+    requires requires(F &&f, duration_t dt, duration_t t) {
+      { f(dt, t) } -> std::same_as<void>;
+    }
+  inline void run(F &&f) {
+    if (!_running) {
+      _start = clock_t::now();
+      _last = clock_t::now() - duration_t((typename duration_t::rep)(1));
+      _running = true;
+    }
+    auto operation_start = clock_t::now();
+    if (operation_start < _start + _duration) {
+      auto dt = operation_start - _last;
+      _last = clock_t::now();
+      f(dt, std::chrono::duration_cast<duration_t>(operation_start - _start));
+    } else {
+      _running = false;
+    }
+  }
+
+  inline bool is_running() const { return _running; }
+
+private:
+  duration_t _duration;
+  bool _running;
+  time_point_t _start;
+  time_point_t _last;
+};
 } // namespace timed
 } // namespace mm
